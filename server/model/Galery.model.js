@@ -6,8 +6,8 @@ export const GalerySchema = new mongoose.Schema({
         required : [true],
     }, 
     resultImg: {type: String},
-    postDate: {type: Date},
-    description: {type: String}
+    description: {type: String},
+    postDate: {type: Date}
 });
 
-export default mongoose.model.Galery || mongoose.model('Galery', GalerySchema);
+export default mongoose.model.Galeryes || mongoose.model('Galery', GalerySchema);

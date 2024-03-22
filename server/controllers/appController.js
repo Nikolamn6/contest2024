@@ -1,9 +1,14 @@
 import UserModel from '../model/User.model.js';
 import PostModel from '../model/Post.model.js';
+import GaleryModel from '../model/Galery.model.js';
+import ChatModel from '../model/Chat.model.js';
+import MessageModel from '../model/Message.model.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import ENV from '../config.js'
 import otpGenerator from 'otp-generator';
+import asyncHandler from 'express-async-handler';
+
 // const fs = require('fs');
 
 export async function verifyUser(req, res, next){
@@ -20,7 +25,6 @@ export async function verifyUser(req, res, next){
         return res.status(404).send({ error: "Authentication Error"});
     }
 }
-
 
 export async function register(req,res){
 
@@ -77,7 +81,9 @@ export async function register(req,res){
                                 profile: profile || '',
                                 email,
                                 firstName,
-                                lastName
+                                lastName,
+                                kilos: 0,
+                                goalKilos: 0
                             });
 
 
@@ -259,11 +265,14 @@ export async function resetPassword(req,res){
 
 // app.post('/post', uploadMiddleware.single('file');
 
+
+// BLOG
+
 export async function postBlog(req, res) {
     const { title, summary, content, author } = req.body;   
     const imageName = req.file.filename;
 
-    console.log(imageName);
+    // console.log(imageName);
 
     try {
         const blog = new PostModel({
@@ -271,14 +280,280 @@ export async function postBlog(req, res) {
             summary,
             content,
             cover: imageName,
-            author
+            author: author
         });
 
 
         blog.save()
-            .then(result => res.status(201).send({ msg: "Blog Created Successfully"}))
+            .then(result => res.status(201).send({ msg: "Blog Created Successfully" }))
             .catch(error => res.status(500).send({error}))
     } catch (error) {
         res.status(500).send({error});
     }
   };
+
+
+//   GALLERY
+
+  export async function postGallery(req, res){
+    const {description, author} = req.body;
+    const imageName = req.file.filename;
+
+    try {
+        const gallery = new GaleryModel({
+            username: author,
+            resultImg: imageName,
+            description,
+            postDate: Date.now()
+        });
+
+
+        gallery.save()
+            .then(result => res.status(201).send({ msg: "Image Created Successfully" }))
+            .catch(error => res.status(500).send({error}))
+    } catch (error) {
+        res.status(500).send({error});
+    }
+  }
+
+// CHAT _________
+
+export const allUsers = asyncHandler(async (req, res) => {
+  const keyword = req.query.search
+    ? {
+        $or: [
+          { name: { $regex: req.query.search, $options: "i" } },
+          { email: { $regex: req.query.search, $options: "i" } },
+        ],
+      }
+    : {};
+
+  const users = await UserModel.find(keyword).find({ _id: { $ne: req.user._id } });
+  res.send(users);
+});
+
+
+export const accessChat = asyncHandler(async (req, res) => {
+    const { userId } = req.body;
+  
+    if (!userId) {
+      console.log("UserId param not sent with request");
+      return res.sendStatus(400);
+    }
+  
+    var isChat = await ChatModel.find({
+      isGroupChat: false,
+      $and: [
+        { users: { $elemMatch: { $eq: req.user._id } } },
+        { users: { $elemMatch: { $eq: userId } } },
+      ],
+    })
+      .populate("users", "-password")
+      .populate("latestMessage");
+  
+    isChat = await UserModel.populate(isChat, {
+      path: "latestMessage.sender",
+      select: "name pic email",
+    });
+  
+    if (isChat.length > 0) {
+      res.send(isChat[0]);
+    } else {
+      var chatData = {
+        chatName: "sender",
+        isGroupChat: false,
+        users: [req.user._id, userId],
+      };
+  
+      try {
+        const createdChat = await ChatModel.create(chatData);
+        const FullChat = await ChatModel.findOne({ _id: createdChat._id }).populate(
+          "users",
+          "-password"
+        );
+        res.status(200).json(FullChat);
+      } catch (error) {
+        res.status(400);
+        throw new Error(error.message);
+      }
+    }
+  });
+  
+
+  export const fetchChats = asyncHandler(async (req, res) => {
+    try {
+        ChatModel.find({ users: { $elemMatch: { $eq: req.user._id } } })
+        .populate("users", "-password")
+        .populate("groupAdmin", "-password")
+        .populate("latestMessage")
+        .sort({ updatedAt: -1 })
+        .then(async (results) => {
+          results = await UserModel.populate(results, {
+            path: "latestMessage.sender",
+            select: "name pic email",
+          });
+          res.status(200).send(results);
+        });
+    } catch (error) {
+      res.status(400);
+      throw new Error(error.message);
+    }
+  });
+  
+
+  export const createGroupChat = asyncHandler(async (req, res) => {
+    if (!req.body.users || !req.body.name) {
+      return res.status(400).send({ message: "Please Fill all the feilds" });
+    }
+  
+    var users = JSON.parse(req.body.users);
+  
+    if (users.length < 2) {
+      return res
+        .status(400)
+        .send("More than 2 users are required to form a group chat");
+    }
+  
+    users.push(req.user);
+  
+    try {
+      const groupChat = await ChatModel.create({
+        chatName: req.body.name,
+        users: users,
+        isGroupChat: true,
+        groupAdmin: req.user,
+      });
+  
+      const fullGroupChat = await ChatModel.findOne({ _id: groupChat._id })
+        .populate("users", "-password")
+        .populate("groupAdmin", "-password");
+  
+      res.status(200).json(fullGroupChat);
+    } catch (error) {
+      res.status(400);
+      throw new Error(error.message);
+    }
+  });
+  
+
+  export const renameGroup = asyncHandler(async (req, res) => {
+    const { chatId, chatName } = req.body;
+  
+    const updatedChat = await ChatModel.findByIdAndUpdate(
+      chatId,
+      {
+        chatName: chatName,
+      },
+      {
+        new: true,
+      }
+    )
+      .populate("users", "-password")
+      .populate("groupAdmin", "-password");
+  
+    if (!updatedChat) {
+      res.status(404);
+      throw new Error("Chat Not Found");
+    } else {
+      res.json(updatedChat);
+    }
+  });
+  
+
+  export const removeFromGroup = asyncHandler(async (req, res) => {
+    const { chatId, userId } = req.body;
+  
+    // check if the requester is admin
+  
+    const removed = await ChatModel.findByIdAndUpdate(
+      chatId,
+      {
+        $pull: { users: userId },
+      },
+      {
+        new: true,
+      }
+    )
+      .populate("users", "-password")
+      .populate("groupAdmin", "-password");
+  
+    if (!removed) {
+      res.status(404);
+      throw new Error("Chat Not Found");
+    } else {
+      res.json(removed);
+    }
+  });
+  
+
+  export  const addToGroup = asyncHandler(async (req, res) => {
+    const { chatId, userId } = req.body;
+  
+    // check if the requester is admin
+  
+    const added = await ChatModel.findByIdAndUpdate(
+      chatId,
+      {
+        $push: { users: userId },
+      },
+      {
+        new: true,
+      }
+    )
+      .populate("users", "-password")
+      .populate("groupAdmin", "-password");
+  
+    if (!added) {
+      res.status(404);
+      throw new Error("Chat Not Found");
+    } else {
+      res.json(added);
+    }
+  });
+
+
+//   MESSAGES ________________________
+export const allMessages = asyncHandler(async (req, res) => {
+    try {
+      const messages = await MessageModel.find({ chat: req.params.chatId })
+        .populate("sender", "name pic email")
+        .populate("chat");
+      res.json(messages);
+    } catch (error) {
+      res.status(400);
+      throw new Error(error.message);
+    }
+  });
+  
+  export const sendMessage = asyncHandler(async (req, res) => {
+    const { content, chatId } = req.body;
+  
+    if (!content || !chatId) {
+      console.log("Invalid data passed into request");
+      return res.sendStatus(400);
+    }
+  
+    var newMessage = {
+      sender: req.user._id,
+      content: content,
+      chat: chatId,
+    };
+  
+    try {
+      var message = await MessageModel.create(newMessage);
+  
+      message = await message.populate("sender", "name pic").execPopulate();
+      message = await message.populate("chat").execPopulate();
+      message = await UserModel.populate(message, {
+        path: "chat.users",
+        select: "name pic email",
+      });
+  
+      await ChatModel.findByIdAndUpdate(req.body.chatId, { latestMessage: message });
+  
+      res.json(message);
+    } catch (error) {
+      res.status(400);
+      throw new Error(error.message);
+    }
+  });

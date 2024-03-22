@@ -29,7 +29,12 @@ export const UserSchema = new mongoose.Schema({
     job : { type : String},
     kilos: { type: Number},
     goalKilos: {type: Number},
-    profile: { type: String}
+    profile: { type: String},
+    isAdmin: {
+        type: Boolean,
+        required: true,
+        default: false,
+      },
 }
 // ,{collection: ""}
 );
